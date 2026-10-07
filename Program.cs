@@ -1,0 +1,91 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using TaskManagementAPI.Data;
+using TaskManagementAPI.Services;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using TaskManagementAPI.Constants;
+using TaskManagementAPI.Repositories;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+
+builder.Services.AddControllers();
+// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+builder.Services.AddOpenApi();
+
+//Add DbContext
+builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+//------------------------------------------
+//REPOSITORY REGISTRATION
+//Order : Generic first , then specific repositories
+//------------------------------------------
+//Generic repository - available for any entity type if needed
+builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+
+//User repository - used by AuthService
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+
+//Task repository - used by TaskService
+builder.Services.AddScoped<ITaskRepository, TaskRepository>();
+
+//RefreshToken repository - used by AuthService
+builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+
+//Register Auth Service
+builder.Services.AddScoped<IAuthService,AuthService>();
+
+//Register Task Service
+builder.Services.AddScoped<ITaskService,TaskService>();
+
+//Configure JWT Authentication
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+}).AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = builder.Configuration["JwtSettings:Issuer"],
+        ValidAudience = builder.Configuration["JwtSettings:Audienc"],
+        IssuerSigningKey = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:SecretKey"]!)),
+        ClockSkew = TimeSpan.Zero //New : Remove default 5- minute grace period
+    };
+});
+
+//Configure Authorization Policies
+builder.Services.AddAuthorization(options =>
+{
+    //Admin-only policies
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole(RoleConstants.Admin));
+
+    //Manager or Admin policies
+    options.AddPolicy("ManagerOrAdmin", policy => policy.RequireRole(RoleConstants.Manager,RoleConstants.Admin));
+
+    //Any authenticated user (User, Manager or Admin)
+    options.AddPolicy("AuthenticatedUser", policy => policy.RequireAuthenticatedUser());
+});
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
+
+app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();
